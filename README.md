@@ -411,3 +411,104 @@ Remember: We're not looking for perfection - we're looking for potential, clear 
 **Ready? Fork and start building!** 🚀
 
 ---
+# Research Paper RAG System
+
+A production-ready Retrieval-Augmented Generation (RAG) system for academic research papers.
+
+## Features
+
+- **Document Upload**: Upload PDF research papers, extract text with section awareness
+- **Intelligent Querying**: Ask natural language questions about papers
+- **Paper Management**: CRUD operations for managing papers
+- **Query History**: Track and analyze query performance
+
+## Tech Stack
+
+- **FastAPI**: Async Python web framework
+- **Qdrant**: Vector database for embeddings
+- **NeonDB (PostgreSQL)**: Metadata and query history storage
+- **Sentence-Transformers**: Text embedding generation
+- **Ollama/DeepSeek**: LLM for answer generation
+
+## Setup
+
+1. **Clone the repository**
+
+2. **Install dependencies**
+   ```
+   pip install -r requirements.txt
+   ```
+
+3. **Configure environment variables**
+   - Copy `.env.example` to `.env` and update with your settings
+   - Set database credentials, Qdrant URL, and LLM configuration
+
+4. **Start Qdrant**
+   - Using Docker: `docker run -p 6333:6333 qdrant/qdrant`
+   - Or install locally: [Qdrant Installation](https://qdrant.tech/documentation/install/)
+
+5. **Start Ollama (if using)**
+   - Install from [Ollama.ai](https://ollama.ai/)
+   - Pull the model: `ollama pull llama3`
+
+6. **Run the application**
+   ```
+   uvicorn src.main:app --reload
+   ```
+
+7. **Access the API**
+   - API documentation: http://localhost:8000/docs
+   - Health check: http://localhost:8000/
+
+## API Endpoints
+
+### Paper Management
+
+- `POST /api/papers/upload`: Upload a PDF research paper
+- `GET /api/papers`: List all papers
+- `GET /api/papers/{paper_id}`: Get paper details
+- `DELETE /api/papers/{paper_id}`: Delete a paper
+
+### Querying
+
+- `POST /api/query`: Query papers with natural language
+- `GET /api/query/history`: Get query history
+- `POST /api/query/history/{query_id}/rate`: Rate a query response
+
+## Example Usage
+
+### Uploading a Paper
+
+```bash
+curl -X 'POST' \
+  'http://localhost:8000/api/papers/upload' \
+  -H 'accept: application/json' \
+  -H 'Content-Type: multipart/form-data' \
+  -F 'file=@research_paper.pdf'
+```
+
+### Querying Papers
+
+```bash
+curl -X 'POST' \
+  'http://localhost:8000/api/query?query=What%20are%20the%20main%20findings%20of%20the%20paper?' \
+  -H 'accept: application/json'
+```
+
+### Query with Paper Filter
+
+```bash
+curl -X 'POST' \
+  'http://localhost:8000/api/query?query=Explain%20the%20methodology&paper_ids=1&paper_ids=2' \
+  -H 'accept: application/json'
+```
+
+## Architecture
+
+- **PDF Processing Pipeline**: Extract text → Identify sections → Chunk text
+- **Embedding Generation**: Convert text chunks to vector embeddings
+- **Vector Search**: Find relevant chunks based on query similarity
+- **RAG Pipeline**: Retrieve context → Generate answer with LLM
+- **Async Database**: Efficient PostgreSQL integration with SQLAlchemy
+
+uvicorn src.main:app --reload
