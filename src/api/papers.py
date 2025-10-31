@@ -126,14 +126,15 @@ async def upload_paper(
             # Store in Qdrant in batch and capture point IDs
             point_ids = await qdrant_service.store_embeddings(embeddings=embeddings, metadata=metadata_list)
 
-            # Persist chunks in relational DB aligned to Qdrant IDs
+            # Persist chunks in relational DB aligned to Qdrant IDs (batch insert + flush)
+            paper_chunk_models: List[PaperChunk] = []
             for idx, chunk in enumerate(chunks):
                 vector_id = point_ids[idx] if idx < len(point_ids) else ""
                 section_val = chunk.get('section')
                 if isinstance(section_val, str):
                     section_val = section_val[:100]
                 content_val = _sanitize_text(chunk.get('content', ''))
-                db.add(PaperChunk(
+                paper_chunk_models.append(PaperChunk(
                     paper_id=paper.id,
                     content=content_val,
                     section=section_val,
@@ -141,7 +142,19 @@ async def upload_paper(
                     chunk_index=chunk.get('chunk_index'),
                     vector_id=vector_id
                 ))
+            if paper_chunk_models:
+                db.add_all(paper_chunk_models)
+                # Ensure INSERTs are issued before commit for early detection of schema/constraint issues
+                await db.flush()
             await db.commit()
+
+            # Optional verification: log number of chunks now in DB for this paper
+            try:
+                result = await db.execute(select(PaperChunk).where(PaperChunk.paper_id == paper.id))
+                persisted_count = len(result.scalars().all())
+                logger.info(f"Persisted {persisted_count} chunks for paper_id={paper.id}")
+            except Exception as verify_err:
+                logger.warning(f"Failed to verify chunk persistence for paper_id={paper.id}: {verify_err}")
             
             logger.info(f"Successfully processed paper: {paper.title} with {len(chunks)} chunks")
             

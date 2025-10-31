@@ -23,7 +23,6 @@ Thumbs.db
 
 # Env files
 .env
-.env.*
 
 # Build/Dist
 build/

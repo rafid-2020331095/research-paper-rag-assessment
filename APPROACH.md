@@ -9,8 +9,7 @@ We implemented a section-aware chunking strategy that:
 1. **Preserves Section Context**: Each chunk includes section information (Abstract, Introduction, Methods, Results, Discussion, Conclusion)
 2. **Maintains Semantic Coherence**: Chunks are created with overlapping text to preserve context across chunk boundaries
 3. **Balanced Size**: Chunks are sized to balance between:
-   - Small enough for precise retrieval (300-500 tokens)
-   - Large enough to contain complete thoughts
+   - TARGET_CHUNK_TOKENS=1200, MAX_CHUNK_TOKENS=1800, MIN_CHUNK_TOKENS=300, OVERLAP_TOKENS=60.
 
 This approach ensures that when retrieving chunks for a query, we maintain the original paper's structure and context, making citations more accurate.
 
@@ -36,7 +35,7 @@ Our RAG pipeline follows these steps:
    - Instructs the LLM to answer based ONLY on provided context
    - Requires citations to specific papers, sections, and pages
    - Asks for a confidence score
-5. **Answer Generation**: Use Ollama or DeepSeek to generate the final response
+5. **Answer Generation**: Use Ollama to generate the final response
 
 ### Prompt Engineering Approach
 
@@ -75,10 +74,120 @@ We designed the database schema to efficiently store:
 3. **Queries**: User questions and response metrics
 4. **Citations**: Tracking which papers were referenced in answers
 
+Here’s a **clear table-wise breakdown** of out database schema — showing **columns, primary keys, and foreign keys** for each table defined in your SQLAlchemy models:
+
+---
+
+### 🧩 **1. `papers`**
+
+| Column        | Type        | Key    | Description               |
+| ------------- | ----------- | ------ | ------------------------- |
+| `id`          | Integer     | **PK** | Unique paper identifier   |
+| `title`       | String(255) |        | Paper title               |
+| `authors`     | String(255) |        | Author list               |
+| `year`        | Integer     |        | Publication year          |
+| `filename`    | String(255) |        | Original filename         |
+| `file_path`   | String(255) |        | Local/remote storage path |
+| `uploaded_at` | DateTime    |        | Timestamp of upload       |
+
+**Relationships:**
+
+* 🔁 One-to-many with `paper_chunks` → `PaperChunk.paper_id`
+* 🔁 Many-to-many with `queries` via `query_papers`
+* 🔁 One-to-many with `citations` → `Citation.paper_id`
+
+---
+
+### 📑 **2. `paper_chunks`**
+
+| Column        | Type        | Key                | Description                         |
+| ------------- | ----------- | ------------------ | ----------------------------------- |
+| `id`          | Integer     | **PK**             | Unique chunk identifier             |
+| `paper_id`    | Integer     | **FK → papers.id** | Parent paper                        |
+| `content`     | Text        |                    | Text content of the chunk           |
+| `section`     | String(100) |                    | Section name (e.g., “Introduction”) |
+| `page_number` | Integer     |                    | Page number of the chunk            |
+| `chunk_index` | Integer     |                    | Sequential chunk index              |
+| `vector_id`   | String(255) |                    | Corresponding Qdrant vector ID      |
+
+**Relationships:**
+
+* 🔁 Many-to-one with `papers`
+* 🔁 One-to-many with `citations` → `Citation.chunk_id`
+
+---
+
+### ❓ **3. `queries`**
+
+| Column             | Type     | Key    | Description                  |
+| ------------------ | -------- | ------ | ---------------------------- |
+| `id`               | Integer  | **PK** | Unique query identifier      |
+| `text`             | Text     |        | User query text              |
+| `created_at`       | DateTime |        | Time of query                |
+| `response_time_ms` | Float    |        | Response time (milliseconds) |
+| `user_rating`      | Integer  |        | Optional user rating         |
+
+**Relationships:**
+
+* 🔁 Many-to-many with `papers` via `query_papers`
+* 🔁 One-to-one with `query_answers` → `QueryAnswer.query_id`
+* 🔁 One-to-many with `citations` → `Citation.query_id`
+
+---
+
+### 💬 **4. `query_answers`**
+
+| Column     | Type    | Key                         | Description           |
+| ---------- | ------- | --------------------------- | --------------------- |
+| `query_id` | Integer | **PK**, **FK → queries.id** | Query reference       |
+| `answer`   | Text    |                             | Generated answer text |
+
+**Relationships:**
+
+* 🔁 One-to-one with `queries`
+
+---
+
+### 🔗 **5. `query_papers`** (Association Table)
+
+| Column     | Type    | Key                         | Description     |
+| ---------- | ------- | --------------------------- | --------------- |
+| `query_id` | Integer | **PK**, **FK → queries.id** | Query reference |
+| `paper_id` | Integer | **PK**, **FK → papers.id**  | Paper reference |
+
+**Relationships:**
+
+* Implements many-to-many between `queries` and `papers`
+
+---
+
+### 📚 **6. `citations`**
+
+| Column            | Type        | Key                      | Description                   |
+| ----------------- | ----------- | ------------------------ | ----------------------------- |
+| `id`              | Integer     | **PK**                   | Unique citation ID            |
+| `query_id`        | Integer     | **FK → queries.id**      | Related query                 |
+| `paper_id`        | Integer     | **FK → papers.id**       | Related paper                 |
+| `chunk_id`        | Integer     | **FK → paper_chunks.id** | Cited chunk                   |
+| `section`         | String(100) |                          | Section name                  |
+| `page`            | Integer     |                          | Page number                   |
+| `relevance_score` | Float       |                          | Similarity or relevance value |
+
+**Relationships:**
+
+* 🔁 Many-to-one with `queries`
+* 🔁 Many-to-one with `papers`
+* 🔁 Many-to-one with `paper_chunks`
+
+
+
 The schema supports:
 - Efficient paper retrieval and management
 - Query history analysis
 - Citation tracking for analytics
+
+## SYSTEM OVERVIEW
+![ER Diagram](./architecture.png)
 
 ## Async Implementation
 
@@ -96,9 +205,8 @@ This approach ensures high throughput and responsiveness, even under load.
 
 1. **PDF Extraction Quality**: PDF extraction can be imperfect, especially with complex layouts or equations
 2. **Embedding Model Size**: Chose a smaller model for speed, sacrificing some semantic understanding
-3. **Local LLM Limitations**: Ollama models may have lower quality than cloud alternatives
-4. **Citation Precision**: Citations are based on chunk boundaries, which may not perfectly align with paper structure
-5. **Query Complexity**: Very complex queries spanning multiple papers may require refinement
+3. **Citation Precision**: Citations are based on chunk boundaries, which may not perfectly align with paper structure
+4. **Query Complexity**: Very complex queries spanning multiple papers may require refinement
 
 ## Future Improvements
 
