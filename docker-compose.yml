@@ -12,12 +12,16 @@ services:
       - QDRANT_HOST=${QDRANT_HOST:-qdrant}
       - QDRANT_PORT=${QDRANT_PORT:-6333}
       - UPLOAD_DIR=${UPLOAD_DIR:-/app/uploaded_papers}
-      - LLM_TYPE=${LLM_TYPE:-gemini}
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3}
-      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      # - LLM_TYPE=${LLM_TYPE:-gemini}
+      # - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      # - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      # - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
+      # - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3}
+      # - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - LLM_TYPE=${LLM_TYPE:-ollama}          # Use Ollama Cloud
+      - OLLAMA_API_KEY=${OLLAMA_API_KEY}      # Cloud API key from .env
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-deepseek-v3.1:671b}  # Cloud model
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
     ports:
       - "8000:8000"
     volumes:

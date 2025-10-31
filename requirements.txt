@@ -11,3 +11,5 @@ asyncpg
 sqlalchemy
 python-multipart
 google-generativeai
+scikit-learn
+ollama

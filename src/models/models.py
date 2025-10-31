@@ -96,6 +96,8 @@ class PaperResponse(PaperBase):
     id: int
     filename: str
     uploaded_at: datetime.datetime
+    file_path: Optional[str] = None
+    download_url: Optional[str] = None
 
     class Config:
         orm_mode = True
@@ -110,6 +112,8 @@ class CitationResponse(BaseModel):
     section: Optional[str] = None
     page: Optional[int] = None
     relevance_score: float
+    paper_id: Optional[int] = None
+    chunk_index: Optional[int] = None
 
 class QueryResponse(BaseModel):
     answer: str

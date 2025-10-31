@@ -79,7 +79,6 @@ POST /api/query
 ```python
 GET    /api/papers              # List all papers
 GET    /api/papers/{id}         # Get paper details
-DELETE /api/papers/{id}         # Remove paper + vectors
 GET    /api/papers/{id}/stats   # View/download stats
 ```
 
@@ -511,4 +510,22 @@ curl -X 'POST' \
 - **RAG Pipeline**: Retrieve context → Generate answer with LLM
 - **Async Database**: Efficient PostgreSQL integration with SQLAlchemy
 
+
+rag-venv\scripts\activate
+ctrl+shift+p ->select python:interpretor ->select the virtual env
 uvicorn src.main:app --reload
+docker run -p 6333:6333 qdrant/qdrant
+git status
+git branch
+git remote -v
+git add .
+git commit -m "message"
+git push -u origin submission/rafid-adib
+
+docker compose up --build -d
+docker ps
+
+docker compose logs -f
+docker compose logs -f api
+docker-compose up
+docker-compose build

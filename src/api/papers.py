@@ -1,20 +1,38 @@
 import os
 import logging
 import tempfile
+import re
+import unicodedata
 from typing import List, Optional
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query, status
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import delete
 
 from src.models.database import get_db
-from src.models.models import Paper, PaperCreate, PaperResponse
+from src.models.models import Paper, PaperCreate, PaperResponse, PaperChunk
 from src.services.pdf_processor import PDFProcessor
 from src.services.embedding_service import get_embedding_service
 from src.services.qdrant_client import get_qdrant_service
+from src.services.metadata_llm import get_llm_metadata_extractor
 
 router = APIRouter(prefix="/api/papers", tags=["papers"])
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_text(value: str) -> str:
+    """Make text safe for Postgres TEXT: remove null bytes and invalid unicode/control chars."""
+    if not isinstance(value, str):
+        return ""
+    # Replace null bytes and normalize
+    text = value.replace("\x00", " ")
+    # Remove most control characters except newline, tab, carriage return
+    text = re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]", " ", text)
+    # Normalize unicode and drop undecodable bytes
+    text = unicodedata.normalize("NFC", text)
+    text = text.encode("utf-8", errors="ignore").decode("utf-8", errors="ignore")
+    return text
 
 @router.post("/upload", response_model=List[PaperResponse], status_code=status.HTTP_201_CREATED)
 async def upload_paper(
@@ -22,7 +40,8 @@ async def upload_paper(
     db: AsyncSession = Depends(get_db),
     pdf_processor: PDFProcessor = Depends(PDFProcessor),
     embedding_service = Depends(get_embedding_service),
-    qdrant_service = Depends(get_qdrant_service)
+    qdrant_service = Depends(get_qdrant_service),
+    llm_metadata_extractor = Depends(get_llm_metadata_extractor)
 ):
     """
     Upload one or more research paper PDFs, process them, and store in the database and vector store.
@@ -65,13 +84,17 @@ async def upload_paper(
             # Extract text and sections first
             full_text, sections = await pdf_processor.extract_text_from_pdf(persistent_path)
 
-            # Extract metadata using both file_path and full_text
-            metadata = await pdf_processor.extract_metadata(persistent_path, full_text)
+            # Extract metadata using LLM (with fallback inside)
+            metadata = await pdf_processor.extract_metadata(persistent_path, full_text, llm_extractor=llm_metadata_extractor)
 
             # Create paper record (ensure non-null file_path)
+            raw_title = metadata.get('title', file.filename)
+            raw_authors = metadata.get('authors', '')
+            title_val = (raw_title if isinstance(raw_title, str) else str(raw_title))[:255]
+            authors_val = (raw_authors if isinstance(raw_authors, str) else str(raw_authors))[:255]
             paper = Paper(
-                title=metadata.get('title', file.filename),
-                authors=metadata.get('authors', ''),
+                title=title_val,
+                authors=authors_val,
                 year=metadata.get('year'),
                 filename=original_filename,
                 file_path=persistent_path
@@ -100,8 +123,25 @@ async def upload_paper(
                     "chunk_index": chunk.get('chunk_index')
                 })
 
-            # Store in Qdrant in batch
-            await qdrant_service.store_embeddings(embeddings=embeddings, metadata=metadata_list)
+            # Store in Qdrant in batch and capture point IDs
+            point_ids = await qdrant_service.store_embeddings(embeddings=embeddings, metadata=metadata_list)
+
+            # Persist chunks in relational DB aligned to Qdrant IDs
+            for idx, chunk in enumerate(chunks):
+                vector_id = point_ids[idx] if idx < len(point_ids) else ""
+                section_val = chunk.get('section')
+                if isinstance(section_val, str):
+                    section_val = section_val[:100]
+                content_val = _sanitize_text(chunk.get('content', ''))
+                db.add(PaperChunk(
+                    paper_id=paper.id,
+                    content=content_val,
+                    section=section_val,
+                    page_number=chunk.get('page_number'),
+                    chunk_index=chunk.get('chunk_index'),
+                    vector_id=vector_id
+                ))
+            await db.commit()
             
             logger.info(f"Successfully processed paper: {paper.title} with {len(chunks)} chunks")
             
@@ -111,7 +151,9 @@ async def upload_paper(
                 authors=paper.authors,
                 year=paper.year,
                 filename=paper.filename,
-                uploaded_at=paper.uploaded_at
+                uploaded_at=paper.uploaded_at,
+                file_path=paper.file_path,
+                download_url=f"/api/papers/{paper.id}/download"
             ))
         
         except Exception as e:
@@ -146,7 +188,9 @@ async def list_papers(
             authors=paper.authors,
             year=paper.year,
             filename=paper.filename,
-            uploaded_at=paper.uploaded_at
+            uploaded_at=paper.uploaded_at,
+            file_path=paper.file_path,
+            download_url=f"/api/papers/{paper.id}/download"
         ) for paper in papers
     ]
 
@@ -174,34 +218,105 @@ async def get_paper(
         authors=paper.authors,
         year=paper.year,
         filename=paper.filename,
-        uploaded_at=paper.uploaded_at
+        uploaded_at=paper.uploaded_at,
+        file_path=paper.file_path,
+        download_url=f"/api/papers/{paper.id}/download"
     )
 
-@router.delete("/{paper_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_paper(
+# @router.delete("/{paper_id}", status_code=status.HTTP_204_NO_CONTENT)
+# async def delete_paper(
+#     paper_id: int,
+#     db: AsyncSession = Depends(get_db),
+#     qdrant_service = Depends(get_qdrant_service)
+# ):
+#     """
+#     Delete a paper and its associated embeddings.
+#     """
+#     # Check if paper exists
+#     query = select(Paper).where(Paper.id == paper_id)
+#     result = await db.execute(query)
+#     paper = result.scalars().first()
+    
+#     if not paper:
+#         raise HTTPException(
+#             status_code=status.HTTP_404_NOT_FOUND,
+#             detail=f"Paper with ID {paper_id} not found"
+#         )
+    
+#     # Delete file from filesystem if present
+#     try:
+#         if paper.file_path and os.path.exists(paper.file_path):
+#             os.remove(paper.file_path)
+#     except Exception as fe:
+#         logger.warning(f"Failed to remove file for paper_id={paper_id}: {fe}")
+
+#     # Delete from database
+#     await db.execute(delete(Paper).where(Paper.id == paper_id))
+#     await db.commit()
+    
+#     # Delete from vector store
+#     await qdrant_service.delete_by_paper_id(paper_id)
+    
+#     return None
+
+
+@router.get("/{paper_id}/download")
+async def download_paper(
     paper_id: int,
-    db: AsyncSession = Depends(get_db),
-    qdrant_service = Depends(get_qdrant_service)
+    db: AsyncSession = Depends(get_db)
 ):
     """
-    Delete a paper and its associated embeddings.
+    Stream-download the stored PDF file for a paper by ID.
     """
-    # Check if paper exists
     query = select(Paper).where(Paper.id == paper_id)
     result = await db.execute(query)
     paper = result.scalars().first()
-    
     if not paper:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Paper with ID {paper_id} not found"
         )
-    
-    # Delete from database
-    await db.execute(delete(Paper).where(Paper.id == paper_id))
+    if not paper.file_path or not os.path.exists(paper.file_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found on server"
+        )
+    return FileResponse(path=paper.file_path, filename=paper.filename, media_type="application/pdf")
+
+@router.delete("", status_code=status.HTTP_200_OK)
+async def bulk_delete_papers(
+    ids: List[int] = Query(..., description="Repeat the query param for multiple IDs: ?ids=1&ids=2"),
+    db: AsyncSession = Depends(get_db),
+    qdrant_service = Depends(get_qdrant_service)
+):
+    """
+    Delete multiple papers and their associated embeddings and files.
+    Example: DELETE /api/papers?ids=1&ids=2&ids=3
+    """
+    if not ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No paper IDs provided")
+
+    # Fetch all requested papers
+    result = await db.execute(select(Paper).where(Paper.id.in_(ids)))
+    papers = result.scalars().all()
+
+    found_ids = {p.id for p in papers}
+    not_found_ids = [pid for pid in ids if pid not in found_ids]
+
+    # Remove files and qdrant vectors per paper
+    for p in papers:
+        try:
+            if p.file_path and os.path.exists(p.file_path):
+                os.remove(p.file_path)
+        except Exception as fe:
+            logger.warning(f"Failed to remove file for paper_id={p.id}: {fe}")
+        try:
+            await qdrant_service.delete_by_paper_id(p.id)
+        except Exception as qe:
+            logger.warning(f"Failed to delete vectors for paper_id={p.id}: {qe}")
+
+    # Bulk delete from DB
+    await db.execute(delete(Paper).where(Paper.id.in_(list(found_ids))))
     await db.commit()
-    
-    # Delete from vector store
-    await qdrant_service.delete_by_paper_id(paper_id)
-    
-    return None
+
+    return {"deleted_ids": list(found_ids), "not_found_ids": not_found_ids}

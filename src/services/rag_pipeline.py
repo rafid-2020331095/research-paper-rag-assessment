@@ -8,6 +8,7 @@ import json
 import httpx
 from dotenv import load_dotenv
 import google.generativeai as genai
+from ollama import Client
 
 from src.services.embedding_service import get_embedding_service
 from src.services.qdrant_client import get_qdrant_service
@@ -23,11 +24,10 @@ class RAGPipeline:
     
     def __init__(self):
         """Initialize the RAG pipeline."""
-        self.llm_type = os.getenv("LLM_TYPE", "gemini")  # "gemini", "ollama" or "deepseek"
+        self.llm_type = os.getenv("LLM_TYPE", "ollama")  # default to ollama now
         
-        # Gemini configuration
-        self.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
-        self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        # Ollama configuration
+        self.ollama_api_key = os.getenv('OLLAMA_API_KEY', '')
         
         # Legacy configurations (kept for backward compatibility)
         self.ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -35,27 +35,12 @@ class RAGPipeline:
         self.deepseek_api_key = os.getenv("DEEPSEEK_API_KEY", "")
         self.deepseek_api_url = "https://api.deepseek.com/v1/chat/completions"
         
-        # Initialize Gemini if API key is available
-        if self.gemini_api_key and self.llm_type.lower() == "gemini":
-            genai.configure(api_key=self.gemini_api_key)
-        
     async def process_query(self, 
                           query: str, 
                           top_k: int = 5, 
                           paper_ids: Optional[List[int]] = None) -> Tuple[QueryResponse, float]:
-        """
-        Process a query using the RAG pipeline.
-        
-        Args:
-            query: The query text
-            top_k: Number of relevant chunks to retrieve
-            paper_ids: Optional list of paper IDs to search within
-            
-        Returns:
-            Tuple containing:
-                - QueryResponse object with answer, citations, sources, and confidence
-                - Response time in milliseconds
-        """
+        logger.info(f"Processing query: {query}")
+        logger.info("Embedding model: all-MiniLM-L6-v2")
         start_time = time.time()
         
         # Get services
@@ -71,7 +56,11 @@ class RAGPipeline:
             top_k=top_k,
             paper_ids=paper_ids
         )
+        logger.info(f"Qdrant search returned {len(search_results)} chunks")
+        if search_results:
+            logger.info(f"First Qdrant result: {search_results[0]['payload']}")
         
+        # If no search results:
         if not search_results:
             # No relevant chunks found
             return QueryResponse(
@@ -143,8 +132,8 @@ class RAGPipeline:
         prompt = self._construct_prompt(query, context)
         
         # Call appropriate LLM based on configuration
-        if self.llm_type.lower() == "gemini":
-            return await self._call_gemini(prompt)
+        if self.llm_type.lower() == "ollama":
+            return await self._call_ollama_cloud(prompt)
         elif self.llm_type.lower() == "ollama":
             return await self._call_ollama(prompt)
         elif self.llm_type.lower() == "deepseek":
@@ -223,46 +212,47 @@ ANSWER:
             logger.error(f"Error calling Ollama API: {e}")
             return "I encountered an error while generating the answer.", 0.0
     
-    async def _call_gemini(self, prompt: str) -> Tuple[str, float]:
+    async def _call_ollama_cloud(self, prompt: str) -> Tuple[str, float]:
         """
-        Call Gemini API.
-        
-        Args:
-            prompt: The prompt to send to the LLM
-            
-        Returns:
-            Tuple containing:
-                - Generated text
-                - Confidence score
+        Call Ollama Cloud using the 'ollama' client package.
         """
-        if not self.gemini_api_key:
-            logger.error("Gemini API key not provided")
-            return "Gemini API key not configured.", 0.0
-            
-        try:
-            # Create Gemini client
-            genai.configure(api_key=self.gemini_api_key)
-            model = genai.GenerativeModel(self.gemini_model)
-            
-            # Run in asyncio executor to avoid blocking
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: model.generate_content(prompt)
-            )
-            
-            # Extract answer text
-            answer_text = response.text
-            confidence = self._extract_confidence(answer_text)
-            
-            # Remove confidence line from answer if present
-            answer_text = answer_text.replace(f"CONFIDENCE: {confidence}", "").strip()
-            
-            return answer_text, confidence
-                
-        except Exception as e:
-            logger.error(f"Error calling Gemini API: {e}")
-            return "I encountered an error while generating the answer.", 0.0
+        import asyncio
+        host = "https://ollama.com"
+        api_key = self.ollama_api_key
+        if not api_key:
+            return "Ollama API key not set.", 0.0
+        client = Client(
+            host=host,
+            headers={'Authorization': 'Bearer ' + api_key}
+        )
+        messages = [
+            {"role": "user", "content": prompt},
+        ]
+        output = []
+        loop = asyncio.get_event_loop()
+        def get_response():
+            for part in client.chat('deepseek-v3.1:671b', messages=messages, stream=False):
+                # Robustly extract content from dict/tuple
+                content = ''
+                try:
+                    content = part['message']['content']
+                except (KeyError, TypeError):
+                    try:
+                        content = part['content']
+                    except Exception:
+                        content = str(part)
+                if content:
+                    output.append(content)
+        await loop.run_in_executor(None, get_response)
+        answer_text = ''.join(output)
+        # Ensure string, not tuple or anything else
+        if isinstance(answer_text, tuple):
+            answer_text = answer_text[0]
+        elif not isinstance(answer_text, str):
+            answer_text = str(answer_text)
+        confidence = self._extract_confidence(answer_text)
+        answer_text = answer_text.replace(f"CONFIDENCE: {confidence}", "").strip()
+        return answer_text, confidence
     
     async def _call_deepseek(self, prompt: str) -> Tuple[str, float]:
         """
@@ -355,7 +345,9 @@ ANSWER:
                 paper_title=payload.get("paper_title", "Unknown Paper"),
                 section=payload.get("section", None),
                 page=payload.get("page_number", None),
-                relevance_score=result["score"]
+                relevance_score=result["score"],
+                paper_id=payload.get("paper_id"),
+                chunk_index=payload.get("chunk_index"),
             )
             citations.append(citation)
         

@@ -18,7 +18,7 @@ class EmbeddingService:
         Args:
             model_name: Name of the sentence-transformers model to use
         """
-        self.model_name = model_name
+        self.model_name = "all-MiniLM-L6-v2"
         self.model = None
     
     async def initialize(self):
@@ -40,6 +40,7 @@ class EmbeddingService:
         """
         if self.model is None:
             await self.initialize()
+        logger.info(f"Generating embeddings for {len(texts)} texts using model {self.model_name}")
         
         # Process in batches to avoid memory issues with large documents
         batch_size = 32
@@ -65,6 +66,7 @@ class EmbeddingService:
         """
         if self.model is None:
             await self.initialize()
+        logger.info(f"Generating embedding for query: {query}")
         
         # Run embedding generation in a thread pool
         embedding = await asyncio.to_thread(self.model.encode, query)
