@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Virtualenvs
+venv/
+env/
+.venv/
+rag-venv/
+
+# Editors/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Env files
+.env
+
+# Build/Dist
+build/
+dist/
+*.egg-info/
+
+# App data
+uploaded_papers/
+.qdrant/
+postgres-data/
+
+rag-venv
