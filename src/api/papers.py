@@ -236,41 +236,7 @@ async def get_paper(
         download_url=f"/api/papers/{paper.id}/download"
     )
 
-# @router.delete("/{paper_id}", status_code=status.HTTP_204_NO_CONTENT)
-# async def delete_paper(
-#     paper_id: int,
-#     db: AsyncSession = Depends(get_db),
-#     qdrant_service = Depends(get_qdrant_service)
-# ):
-#     """
-#     Delete a paper and its associated embeddings.
-#     """
-#     # Check if paper exists
-#     query = select(Paper).where(Paper.id == paper_id)
-#     result = await db.execute(query)
-#     paper = result.scalars().first()
-    
-#     if not paper:
-#         raise HTTPException(
-#             status_code=status.HTTP_404_NOT_FOUND,
-#             detail=f"Paper with ID {paper_id} not found"
-#         )
-    
-#     # Delete file from filesystem if present
-#     try:
-#         if paper.file_path and os.path.exists(paper.file_path):
-#             os.remove(paper.file_path)
-#     except Exception as fe:
-#         logger.warning(f"Failed to remove file for paper_id={paper_id}: {fe}")
-
-#     # Delete from database
-#     await db.execute(delete(Paper).where(Paper.id == paper_id))
-#     await db.commit()
-    
-#     # Delete from vector store
-#     await qdrant_service.delete_by_paper_id(paper_id)
-    
-#     return None
+# Single delete endpoint removed per request; use bulk delete with one or more ids instead.
 
 
 @router.get("/{paper_id}/download")
@@ -289,12 +255,28 @@ async def download_paper(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Paper with ID {paper_id} not found"
         )
-    if not paper.file_path or not os.path.exists(paper.file_path):
+    # Resolve path: prefer stored file_path; if missing/not found, try Docker volume path
+    resolved_path = paper.file_path
+    if not resolved_path or not os.path.exists(resolved_path):
+        upload_dir = os.getenv("UPLOAD_DIR", os.path.join(os.getcwd(), "uploaded_papers"))
+        # Normalize and join safely to prevent path traversal
+        candidate_path = os.path.normpath(os.path.join(upload_dir, paper.filename))
+        # Ensure candidate is inside upload_dir
+        if os.path.commonpath([os.path.abspath(candidate_path), os.path.abspath(upload_dir)]) != os.path.abspath(upload_dir):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid filename path"
+            )
+        if os.path.exists(candidate_path):
+            resolved_path = candidate_path
+
+    if not resolved_path or not os.path.exists(resolved_path):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File not found on server"
         )
-    return FileResponse(path=paper.file_path, filename=paper.filename, media_type="application/pdf")
+
+    return FileResponse(path=resolved_path, filename=paper.filename, media_type="application/pdf")
 
 @router.delete("", status_code=status.HTTP_200_OK)
 async def bulk_delete_papers(

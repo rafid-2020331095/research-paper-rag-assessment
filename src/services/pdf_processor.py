@@ -464,8 +464,8 @@ class PDFProcessor:
             try:
                 llm_result = await llm_extractor.extract(filename=metadata["filename"], text_sample=first_block)
                 if isinstance(llm_result, dict):
-                    title = (llm_result.get("title") or "").strip()
-                    authors = (llm_result.get("authors") or "").strip()
+                    title = (llm_result.get("title") or "").strip()[:250]
+                    authors = (llm_result.get("authors") or "").strip()[:250]
                     year = llm_result.get("year")
                     if title:
                         metadata["title"] = title

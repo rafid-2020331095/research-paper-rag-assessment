@@ -30,7 +30,7 @@ cd research-paper-rag-assessment
 ```
 
 2. **Configure environment/**
-create a .env and copy files from .env.example to .env
+create a .env and copy files from .env.example to .env and connect with neondb with your own database string.temporarily my string is there.
 ```bash
 copy .env.example .env   # Windows
 
@@ -82,11 +82,11 @@ Key Libraries:
 ---
 | Method | Endpoint | Description | Key Parameters | Example Curl |
 |--------|----------|-------------|----------------|--------------|
-| POST | `/api/papers/upload` | Upload PDFs, parse, embed, store | `files` (array of files) | `curl -X POST ... -F "files=@paper_4.pdf"` |
+| POST | `/api/papers/upload` | Upload PDFs, parse, embed, store(in the api docs(http://localhost:8000/docs) select files from your local system and post) | `files` (array of files) | `curl -X POST ... -F "files=@paper_4.pdf"` |
 | GET | `/api/papers` | List all uploaded papers | None | `curl -X GET "http://127.0.0.1:8000/api/papers"` |
-| GET | `/api/papers/{paper_id}` | Get paper metadata by ID | `paper_id` (path) | `curl -X GET "http://127.0.0.1:8000/api/papers/52"` |
+| GET | `/api/papers/{paper_id}` | Get paper metadata by ID(u can get paper ID from the list all paper api,in frontend we can manage this which id to call based on selection) | `paper_id` (path) | `curl -X GET "http://127.0.0.1:8000/api/papers/52"` |
 | GET | `/api/papers/{paper_id}/download` | Download PDF by ID | `paper_id` (path) | `curl -X GET "http://127.0.0.1:8000/api/papers/52/download"` |
-| DELETE | `/api/papers` | Bulk delete papers & embeddings | `ids` (array<int>, query) | `curl -X DELETE "http://127.0.0.1:8000/api/papers?ids=48&ids=49&ids=50"` |
+| DELETE | `/api/papers` | Bulk delete papers & embeddings(include paper ids u want to delete) | `ids` (array<int>, query) | `curl -X DELETE "http://127.0.0.1:8000/api/papers?ids=48&ids=49&ids=50"` |
 | POST | `/api/query` | RAG query with citations | `query` (string, required); `paper_ids`or `paper_filenames(string)` fillup anyone, `top_k` (optional) | `curl -X POST "http://127.0.0.1:8000/api/query?query=What%20methodology..."` |
 | GET | `/api/query/history` | Get query history | `skip`, `limit` (query, optional) | `curl -X GET "http://127.0.0.1:8000/api/query/history?limit=10"` |
 | POST | `/api/query/history/{query_id}/rate` | Rate a query (1-5 stars) | `query_id` (path); `rating` (query) | `curl -X POST "http://127.0.0.1:8000/api/query/history/52/rate?rating=4"` |
